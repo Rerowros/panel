@@ -11451,6 +11451,7 @@ export const getGetClientProfilesUrl = (params?: GetClientProfilesParams,) => {
 }
 
 /**
+ * List client profiles; `users_count` counts all users on a profile, not only the caller's own users.
  * @summary Get Client Profiles
  */
 export const getClientProfiles = async (params?: GetClientProfilesParams, options?: RequestInit): Promise<ClientProfileResponseList> => {
