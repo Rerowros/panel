@@ -7,19 +7,14 @@ from datetime import UTC, datetime as dt, timedelta
 from jdatetime import date as jd
 
 from app.core.hosts import host_manager
-from app.db.crud.client_template import TEMPLATE_TYPE_TO_LEGACY_KEY
 from app.db.crud.wireguard import pick_peer_ip_for_inbound
 from app.db.models import UserStatus
-from app.models.settings import RULE_TEMPLATE_TYPES, ConfigFormat
 from app.models.status_emojis import STATUS_EMOJIS
 from app.models.subscription import SubscriptionInboundData
 from app.models.user import UsersResponseWithInbounds
 from app.settings import subscription_settings
-from app.subscription.client_templates import (
-    subscription_client_templates,
-    subscription_templates_of_type,
-    subscription_xray_templates,
-)
+from app.subscription.client_profiles import resolve_client_templates
+from app.subscription.client_templates import subscription_xray_templates
 from app.subscription.config_cache import (
     get_or_create_sub_config,
     get_sub_config,
@@ -96,34 +91,14 @@ def _build_subscription_config(
     return None
 
 
-async def resolve_client_templates(
-    client_templates: dict[str, str],
-    config_format: str,
-    rule_template_id: int | None = None,
-) -> dict[str, str]:
-    """Pick the template content for a format.
-
-    Order: host (Xray only, applied per host in process_inbounds_and_tags) > rule > default.
-    """
-    if rule_template_id is None:
-        return client_templates
-    try:
-        template_type = RULE_TEMPLATE_TYPES.get(ConfigFormat(config_format))
-    except ValueError:
-        template_type = None
-    if template_type is None:
-        return client_templates
-    content = (await subscription_templates_of_type(template_type)).get(rule_template_id)
-    if content is None:
-        # Settings validation and template deletion keep this from happening; fall back to the default.
-        logger.warning(f"Subscription rule template {rule_template_id} ({template_type.value}) not found")
-        return client_templates
-    return {**client_templates, TEMPLATE_TYPE_TO_LEGACY_KEY[template_type]: content}
-
-
 def resolve_profile_title(user: UsersResponseWithInbounds, format_variables: dict, sub_settings) -> str | None:
-    """Admin's profile title, else the subscription one, with format variables filled; None if neither is set."""
-    profile_title = (getattr(user.admin, "profile_title", None) if user.admin else None) or sub_settings.profile_title
+    """Profile title (client profile > admin > subscription settings) with format variables filled; None if unset."""
+    client_profile = getattr(user, "client_profile", None)
+    profile_title = (
+        (client_profile.settings.profile_title if client_profile is not None else None)
+        or (getattr(user.admin, "profile_title", None) if user.admin else None)
+        or sub_settings.profile_title
+    )
     if not profile_title:
         return None
     try:
@@ -143,7 +118,7 @@ async def generate_subscription(
     cache_key = make_sub_config_key(user, config_format, as_base64, randomize_order, template_id)
     async def render() -> str | bytes:
         client_templates = await resolve_client_templates(
-            await subscription_client_templates(), config_format, template_id
+            getattr(user, "client_profile", None), config_format, template_id
         )
         xray_template_overrides = await subscription_xray_templates() if config_format == "xray" else None
         conf = _build_subscription_config(config_format, client_templates)
@@ -232,6 +207,10 @@ def get_effective_custom_variables(
     variables = list(custom_variables or [])
     admin_variables = getattr(getattr(user, "admin", None), "custom_variables", None) or []
     variables.extend(admin_variables)
+    # Client profile variables come last, so they win over global and admin ones with the same key
+    profile = getattr(user, "client_profile", None)
+    if profile is not None:
+        variables.extend(profile.settings.custom_variables)
     return variables
 
 

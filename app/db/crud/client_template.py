@@ -83,6 +83,15 @@ async def get_client_template_contents_by_type(db: AsyncSession, template_type: 
     return {row.id: row.content for row in rows}
 
 
+async def get_client_template_contents(db: AsyncSession) -> dict[ClientTemplateType, dict[int, str]]:
+    """type -> {id -> content} for every client template."""
+    rows = (await db.execute(select(ClientTemplate.id, ClientTemplate.template_type, ClientTemplate.content))).all()
+    contents: dict[ClientTemplateType, dict[int, str]] = {}
+    for row in rows:
+        contents.setdefault(ClientTemplateType(row.template_type), {})[row.id] = row.content
+    return contents
+
+
 async def get_client_template_by_id(db: AsyncSession, template_id: int) -> ClientTemplate | None:
     return (
         (await db.execute(select(ClientTemplate).where(ClientTemplate.id == template_id))).unique().scalar_one_or_none()

@@ -53,6 +53,8 @@ def make_sub_config_key(
         proxy_key,
         # Two clients of one user matched by rules with different templates get different output
         template_id,
+        # A client profile can change templates, titles and variables
+        getattr(user, "client_profile_id", None),
     )
 
 
